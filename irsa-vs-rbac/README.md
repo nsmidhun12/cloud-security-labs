@@ -1,4 +1,4 @@
-# 🔐 IRSA vs RBAC – Amazon EKS Security Deep Dive
+# IRSA vs RBAC – Amazon EKS Security Deep Dive
 
 This lab demonstrates the difference between:
 
@@ -281,3 +281,4 @@ Secure EKS workloads require:
 - Clear separation of identity boundaries
 
 Understanding this separation prevents privilege escalation and lateral movement risks in cloud-native environments.
+
