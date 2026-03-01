@@ -1,12 +1,10 @@
-# IRSA vs RBAC – Amazon EKS Security Deep Dive
+# IRSA vs Pod Identity vs RBAC – Amazon EKS Security Deep Dive
 
 This lab demonstrates the difference between:
 
-- **IRSA (IAM Roles for Service Accounts)** → Controls access to AWS services
-- **Kubernetes RBAC** → Controls access to Kubernetes API resources
-
-Understanding this separation is critical for secure EKS workload design.
-
+- **IRSA (IAM Roles for Service Accounts)** - Controls access to AWS services
+- **EKS Pod Identity** - Controls access to AWS services using simplified workload identity
+- **Kubernetes RBAC** - Controls access to Kubernetes API resources
 ---
 
 # Conceptual Overview
@@ -20,14 +18,14 @@ Amazon EKS operates with **two independent identity systems**:
 
 These systems do not replace each other.
 
-- Removing IRSA → Pod loses AWS access  
+- Removing IRSA or Pod Identity → Pod loses AWS access 
 - Removing RBAC → Pod loses Kubernetes API access  
 
 They solve different security problems.
 
 ---
 
-# Architecture Flow
+# Architecture Flow (IRSA)
 
 1. Pod uses a Kubernetes Service Account  
 2. Service Account is linked to an IAM Role via OIDC  
@@ -35,6 +33,12 @@ They solve different security problems.
 4. IAM policy determines AWS access  
 5. RBAC rules determine Kubernetes API access  
 
+# Architecture Flow (Pod Identity)
+1. Pod uses a Kubernetes Service Account
+2. Service Account is associated with an IAM Role using EKS API
+3. Pod Identity agent provides temporary credentials
+4. IAM policy determines AWS access
+5. RBAC rules determine Kubernetes API access
 ---
 
 # Prerequisites
@@ -45,6 +49,7 @@ They solve different security problems.
 - IAM permissions to:
   - Create EKS cluster
   - Create IAM roles and policies
+  - Create Pod Identity associations
 
 ---
 
@@ -121,6 +126,7 @@ aws iam create-policy \
 ```
 
 ---
+# PART 1 – IRSA Demo
 
 # Step 5 – Create IAM Service Account (IRSA)
 
@@ -201,9 +207,82 @@ AccessDenied
 This proves AWS access is controlled by IRSA — not RBAC.
 
 ---
+# PART 2 – EKS Pod Identity Demo
 
-# Step 8 – Test Kubernetes RBAC
+# Step 8 – Create IAM Role for Pod Identity
+Create trust policy file:
+pod-identity-trust.json
 
+```bash
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "pods.eks.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+Create role:
+```bash
+aws iam create-role \
+  --role-name EKS-PodIdentity-S3-Read \
+  --assume-role-policy-document file://pod-identity-trust.json
+```
+Attach the existing S3 policy:
+```bash
+aws iam attach-role-policy \
+  --role-name EKS-PodIdentity-S3-Read \
+  --policy-arn arn:aws:iam::YOUR_ACCOUNT_ID:policy/EKS-S3-Read
+```
+# Step 9 – Create Service Account (No Annotation Required)
+```bash
+kubectl create serviceaccount podid-reader
+```
+Notice:
+- No OIDC annotation
+- No web identity trust referencing OIDC provider
+
+# Step 10 – Create Pod Identity Association
+```bash
+aws eks create-pod-identity-association \
+  --cluster-name demo \
+  --namespace default \
+  --service-account podid-reader \
+  --role-arn arn:aws:iam::YOUR_ACCOUNT_ID:role/EKS-PodIdentity-S3-Read
+```
+This directly links the IAM role to the Kubernetes Service Account.
+
+# Step 11 – Test Pod WITH Pod Identity
+```bash
+kubectl apply -f podid-pod.yaml
+kubectl exec -it podid-demo -- sh
+```
+Verify identity:
+```bash
+aws sts get-caller-identity
+```
+You should see:
+```bash
+arn:aws:iam::ACCOUNT_ID:role/EKS-PodIdentity-S3-Read
+```
+Test S3 access:
+```bash
+aws s3 ls
+aws s3 cp s3://YOUR_BUCKET_NAME/test.txt .
+cat test.txt
+```
+Expected:
+```bash
+EKS SECURITY DEMO
+```
+This confirms AWS access via Pod Identity.
+----
+# Step 12 – Test Kubernetes RBAC
 Apply role:
 
 ```bash
@@ -242,17 +321,19 @@ This confirms RBAC controls Kubernetes API permissions.
 
 # Security Observations
 
-- IRSA follows least privilege at AWS layer
+- IRSA and Pod Identity follow least privilege at AWS layer
 - RBAC follows least privilege at Kubernetes layer
 - Node IAM roles should NOT be used for application access
 - Avoid broad permissions like `s3:*`
-- Always verify trust relationships in IAM
+- Identity complexity increases misconfiguration risk
+- Simplified identity reduces attack surface
 
 ---
 
 # Key Takeaways
 
-- IRSA → AWS authorization
+- IRSA → AWS authorization using OIDC federation
+- Pod Identity → Simplified AWS workload identity
 - RBAC → Kubernetes authorization
 - Both layers must be configured correctly
 - Security failures often occur when these boundaries are misunderstood
@@ -268,3 +349,4 @@ eksctl delete cluster --name demo --region us-east-1
 ```
 
 ---
+
