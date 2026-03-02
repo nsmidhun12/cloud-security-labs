@@ -218,20 +218,24 @@ pod-identity-trust.json
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "AllowEksPodIdentity",
       "Effect": "Allow",
       "Principal": {
         "Service": "pods.eks.amazonaws.com"
       },
-      "Action": "sts:AssumeRole"
+      "Action": [
+        "sts:AssumeRole",
+        "sts:TagSession"
+      ]
     }
   ]
 }
 ```
 Create role:
 ```bash
-aws iam create-role \
+aws iam update-assume-role-policy \
   --role-name EKS-PodIdentity-S3-Read \
-  --assume-role-policy-document file://pod-identity-trust.json
+  --policy-document file://pod-identity-trust.json
 ```
 Attach the existing S3 policy:
 ```bash
@@ -349,4 +353,5 @@ eksctl delete cluster --name demo --region us-east-1
 ```
 
 ---
+
 
